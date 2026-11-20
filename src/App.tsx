@@ -1,0 +1,530 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { signOut } from 'firebase/auth';
+import { BellRing, MessageSquare, WifiOff } from 'lucide-react';
+import { AuthScreen } from './components/AuthScreen';
+import { CallOverlay } from './components/CallOverlay';
+import { ChatView } from './components/ChatView';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import type { WorkspaceTab } from './components/MobileBottomNav';
+import { NotificationsSetupPanel } from './components/NotificationsSetupPanel';
+import { Sidebar } from './components/Sidebar';
+import { useOnlineStatus } from './hooks/usePWAInstall';
+import { usePushNotifications } from './hooks/usePushNotifications';
+import { useWebRTC } from './hooks/useWebRTC';
+import { api, getStoredToken, setStoredToken } from './lib/api';
+import { firebaseAuth } from './lib/firebase';
+import type {
+  CallHistoryItem,
+  CallMode,
+  ConversationSummary,
+  MessageItem,
+  UserPublic,
+} from './shared/types';
+
+export default function App() {
+  const [user, setUser] = useState<UserPublic | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [calls, setCalls] = useState<CallHistoryItem[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [messagesByConv, setMessagesByConv] = useState<Record<string, MessageItem[]>>({});
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [typingByConv, setTypingByConv] = useState<Record<string, string>>({});
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('chats');
+  const [notificationsModalOpen, setNotificationsModalOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('famy_theme') === 'dark';
+    } catch {
+      return false;
+    }
+  });
+
+  const isOnline = useOnlineStatus();
+  const push = usePushNotifications(Boolean(user));
+  const wsRef = useRef<WebSocket | null>(null);
+  const activeConversationIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (darkMode) {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    try {
+      localStorage.setItem('famy_theme', darkMode ? 'dark' : 'light');
+    } catch {
+      // Ignore storage errors
+    }
+  }, [darkMode]);
+
+  const sendWsSignal = useCallback((payload: Record<string, unknown>) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(payload));
+    }
+  }, []);
+
+  const webrtc = useWebRTC({ sendSignal: sendWsSignal });
+  const handleCallSignalRef = useRef(webrtc.handleCallSignal);
+  useEffect(() => {
+    handleCallSignalRef.current = webrtc.handleCallSignal;
+  }, [webrtc.handleCallSignal]);
+
+  // Verify existing session on boot
+  useEffect(() => {
+    const token = getStoredToken();
+    if (!token) {
+      setAuthChecking(false);
+      return;
+    }
+    api
+      .me()
+      .then((res) => {
+        setUser(res.user);
+      })
+      .catch(() => {
+        setStoredToken(null);
+      })
+      .finally(() => {
+        setAuthChecking(false);
+      });
+  }, []);
+
+  const loadWorkspaceData = useCallback(async () => {
+    try {
+      const [convRes, callRes] = await Promise.all([api.listConversations(), api.listCalls()]);
+      setConversations(convRes.conversations);
+      setCalls(callRes.calls);
+
+      const params = new URLSearchParams(window.location.search);
+      const chatParam = params.get('chat');
+      if (chatParam && convRes.conversations.some((c) => c.id === chatParam)) {
+        setActiveConversationId(chatParam);
+      } else if (window.innerWidth >= 768 && convRes.conversations.length > 0 && !activeConversationIdRef.current) {
+        setActiveConversationId(convRes.conversations[0].id);
+      }
+    } catch {
+      // Handled on next reconnect
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    void loadWorkspaceData();
+  }, [user, loadWorkspaceData]);
+
+  // Load messages whenever activeConversationId changes
+  useEffect(() => {
+    if (!user || !activeConversationId) return;
+    let active = true;
+    setLoadingMessages(true);
+
+    api
+      .listMessages(activeConversationId)
+      .then((res) => {
+        if (!active) return;
+        setMessagesByConv((prev) => ({ ...prev, [activeConversationId]: res.messages }));
+        setConversations((prev) =>
+          prev.map((c) => (c.id === activeConversationId ? { ...c, unreadCount: 0 } : c))
+        );
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setLoadingMessages(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user, activeConversationId]);
+
+  // Real-Time WebSocket connection
+  useEffect(() => {
+    if (!user) return;
+    const token = getStoredToken();
+    if (!token) return;
+
+    let cancelled = false;
+    let reconnectTimer: number | null = null;
+    let attempt = 0;
+
+    const connect = () => {
+      if (cancelled) return;
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${proto}//${window.location.host}/ws?token=${encodeURIComponent(token)}`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        attempt = 0;
+        void loadWorkspaceData();
+      };
+
+      ws.onmessage = (ev) => {
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(String(ev.data));
+        } catch {
+          return;
+        }
+
+        const type = String(data.type || '');
+
+        if (type === 'presence:update') {
+          const targetId = String(data.userId);
+          const online = Boolean(data.online);
+          const lastSeen = Number(data.lastSeen || Date.now());
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.peer.id === targetId ? { ...c, peer: { ...c.peer, online, lastSeen } } : c
+            )
+          );
+          return;
+        }
+
+        if (type === 'typing:start' || type === 'typing:stop') {
+          const convId = String(data.conversationId || '');
+          const username = String(data.username || '');
+          setTypingByConv((prev) => {
+            const next = { ...prev };
+            if (type === 'typing:start') {
+              next[convId] = username;
+            } else {
+              delete next[convId];
+            }
+            return next;
+          });
+          return;
+        }
+
+        if (type === 'conversation:read') {
+          const convId = String(data.conversationId || '');
+          const readAt = Number(data.readAt || Date.now());
+          setMessagesByConv((prev) => {
+            const list = prev[convId];
+            if (!list) return prev;
+            return {
+              ...prev,
+              [convId]: list.map((m) => (m.readAt ? m : { ...m, readAt })),
+            };
+          });
+          return;
+        }
+
+        if (type === 'message:new') {
+          const msg = data.message as MessageItem;
+          if (!msg) return;
+
+          setMessagesByConv((prev) => {
+            const existing = prev[msg.conversationId] || [];
+            if (existing.some((m) => m.id === msg.id)) return prev;
+            return { ...prev, [msg.conversationId]: [...existing, msg] };
+          });
+
+          const isViewing = activeConversationIdRef.current === msg.conversationId;
+          if (isViewing && msg.senderId !== user.id) {
+            sendWsSignal({ type: 'conversation:read', conversationId: msg.conversationId });
+          }
+
+          setConversations((prev) => {
+            const exists = prev.some((c) => c.id === msg.conversationId);
+            if (!exists) {
+              void loadWorkspaceData();
+              return prev;
+            }
+            const updated = prev.map((c) => {
+              if (c.id !== msg.conversationId) return c;
+              const incrementUnread = msg.senderId !== user.id && !isViewing ? 1 : 0;
+              return {
+                ...c,
+                lastMessage: msg,
+                updatedAt: msg.createdAt,
+                unreadCount: isViewing ? 0 : c.unreadCount + incrementUnread,
+              };
+            });
+            return [...updated].sort((a, b) => b.updatedAt - a.updatedAt);
+          });
+
+          if (msg.type === 'call') {
+            api
+              .listCalls()
+              .then((res) => setCalls(res.calls))
+              .catch(() => {});
+          }
+          return;
+        }
+
+        if (type.startsWith('call:')) {
+          void handleCallSignalRef.current(data);
+        }
+      };
+
+      ws.onclose = () => {
+        if (cancelled) return;
+        const delay = Math.min(10000, 1000 * Math.pow(1.6, attempt));
+        attempt += 1;
+        reconnectTimer = window.setTimeout(connect, delay);
+      };
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [user, loadWorkspaceData, sendWsSignal]);
+
+  // Listen for Service Worker notification click messages
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === 'famy:notification-click') {
+        const convId = event.data?.data?.conversationId;
+        if (convId) {
+          setActiveTab('chats');
+          setActiveConversationId(String(convId));
+        }
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handler);
+    return () => navigator.serviceWorker.removeEventListener('message', handler);
+  }, []);
+
+  const activeConversation = useMemo(
+    () => conversations.find((c) => c.id === activeConversationId) || null,
+    [conversations, activeConversationId]
+  );
+
+  const totalUnread = useMemo(
+    () => conversations.reduce((sum, c) => sum + c.unreadCount, 0),
+    [conversations]
+  );
+
+  const handleSendMessage = async (payload: {
+    body?: string;
+    mediaUrl?: string;
+    mediaMime?: string;
+    mediaName?: string;
+  }) => {
+    if (!activeConversationId) return;
+    const res = await api.sendMessage(activeConversationId, payload);
+    const msg = res.message;
+    setMessagesByConv((prev) => {
+      const existing = prev[activeConversationId] || [];
+      if (existing.some((m) => m.id === msg.id)) return prev;
+      return { ...prev, [activeConversationId]: [...existing, msg] };
+    });
+    setConversations((prev) =>
+      [...prev]
+        .map((c) =>
+          c.id === activeConversationId
+            ? { ...c, lastMessage: msg, updatedAt: msg.createdAt }
+            : c
+        )
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+    );
+  };
+
+  const handleTypingChange = (typing: boolean) => {
+    if (!activeConversationId) return;
+    sendWsSignal({
+      type: typing ? 'typing:start' : 'typing:stop',
+      conversationId: activeConversationId,
+    });
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await api.signout();
+    } catch {
+      // Ignore network errors on signout
+    }
+    try {
+      await signOut(firebaseAuth);
+    } catch {
+      // Ignore Firebase client signout errors
+    }
+    setStoredToken(null);
+    setUser(null);
+    setConversations([]);
+    setMessagesByConv({});
+    setActiveConversationId(null);
+  };
+
+  if (authChecking) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-[#F6F7F5] dark:bg-[#0B110F]">
+        <div className="text-center space-y-3">
+          <img src="/icon.svg" alt="Famy" className="w-12 h-12 rounded-2xl mx-auto" />
+          <p className="font-display text-sm text-[#5B6862] dark:text-[#9AA8A1]">
+            Opening Famy...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthScreen onAuthenticated={(loggedInUser) => setUser(loggedInUser)} />;
+  }
+
+  const notificationsReady = push.permission === 'granted' && push.isSubscribed;
+  const showMobileChat = Boolean(activeConversation);
+
+  return (
+    <div className="h-full w-full flex flex-col bg-[#F6F7F5] dark:bg-[#0B110F] text-[#111815] dark:text-[#F1F5F3] overflow-hidden">
+      {!isOnline && (
+        <div
+          role="status"
+          className="px-4 py-2 bg-[#B45309] text-white text-xs font-medium flex items-center justify-center gap-2 shrink-0"
+        >
+          <WifiOff className="w-3.5 h-3.5" aria-hidden="true" />
+          <span>Offline — cached conversations remain viewable until connection returns.</span>
+        </div>
+      )}
+
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {/* Left Sidebar (always shown on desktop, hidden on mobile when a chat is active) */}
+        <div className={`${showMobileChat ? 'hidden md:flex' : 'flex'} w-full md:w-auto h-full`}>
+          <Sidebar
+            currentUser={user}
+            conversations={conversations}
+            calls={calls}
+            activeConversationId={activeConversationId}
+            typingByConv={typingByConv}
+            activeTab={activeTab}
+            darkMode={darkMode}
+            push={push}
+            onSelectTab={(tab) => setActiveTab(tab)}
+            onSelectConversation={(id) => {
+              setActiveConversationId(id);
+              setActiveTab('chats');
+            }}
+            onConversationCreated={(conv) => {
+              setConversations((prev) => {
+                const exists = prev.some((c) => c.id === conv.id);
+                return exists ? prev : [conv, ...prev];
+              });
+              setActiveConversationId(conv.id);
+              setActiveTab('chats');
+            }}
+            onStartCall={(convId, peer, mode: CallMode) => {
+              void webrtc.startCall(convId, peer, mode);
+            }}
+            onOpenNotificationsModal={() => setNotificationsModalOpen(true)}
+            onToggleDarkMode={() => setDarkMode((d) => !d)}
+            onSignOut={() => void handleSignOut()}
+          />
+        </div>
+
+        {/* Right Main Pane (Desktop) or Active Chat View (Mobile) */}
+        <main className={`${showMobileChat ? 'flex' : 'hidden md:flex'} flex-1 min-w-0 h-full`}>
+          {activeConversation ? (
+            <ChatView
+              currentUser={user}
+              conversation={activeConversation}
+              messages={messagesByConv[activeConversation.id] || []}
+              loading={loadingMessages}
+              peerTyping={Boolean(typingByConv[activeConversation.id])}
+              onBackMobile={() => setActiveConversationId(null)}
+              onSendMessage={handleSendMessage}
+              onTypingChange={handleTypingChange}
+              onStartCall={(mode) =>
+                void webrtc.startCall(activeConversation.id, activeConversation.peer, mode)
+              }
+            />
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center chat-wallpaper">
+              <div className="max-w-md w-full bg-white dark:bg-[#141D1A] rounded-2xl border border-[#E2E6E1] dark:border-[#24322D] p-7 space-y-5 shadow-xs">
+                <div className="w-12 h-12 rounded-2xl bg-[#0F766E]/12 text-[#0F766E] dark:text-[#5EEAD4] flex items-center justify-center mx-auto">
+                  {notificationsReady ? (
+                    <MessageSquare className="w-6 h-6" />
+                  ) : (
+                    <BellRing className="w-6 h-6" />
+                  )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <h2 className="font-display text-xl font-semibold">
+                    {notificationsReady
+                      ? `Signed in as @${user.username}`
+                      : 'Set up device call alerts'}
+                  </h2>
+                  <p className="text-sm text-[#5B6862] dark:text-[#9AA8A1]">
+                    {notificationsReady
+                      ? 'Select a conversation on the left to send messages, share media, or place voice and video calls.'
+                      : 'Allow push notifications so incoming Famy calls ring on your device even when the app is closed.'}
+                  </p>
+                </div>
+
+                {!notificationsReady && (
+                  <button
+                    type="button"
+                    onClick={() => setNotificationsModalOpen(true)}
+                    className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-[#0F766E] hover:bg-[#0D655E] text-white text-sm font-medium cursor-pointer"
+                  >
+                    Configure Device Notifications
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* Mobile Bottom Navigation (hidden inside active chat thread so keyboard/composer stays clear) */}
+      {!showMobileChat && (
+        <MobileBottomNav
+          activeTab={activeTab}
+          unreadTotal={totalUnread}
+          notificationsReady={notificationsReady}
+          onSelectTab={(tab) => setActiveTab(tab)}
+        />
+      )}
+
+      {/* Notifications Setup Modal */}
+      {notificationsModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Device notification setup"
+          className="fixed inset-0 z-40 bg-black/45 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+        >
+          <NotificationsSetupPanel
+            push={push}
+            username={user.username}
+            onClose={() => setNotificationsModalOpen(false)}
+          />
+        </div>
+      )}
+
+      {/* Live WebRTC Call Overlay */}
+      {webrtc.callState && (
+        <CallOverlay
+          call={webrtc.callState}
+          localStream={webrtc.localStream}
+          remoteStream={webrtc.remoteStream}
+          micMuted={webrtc.micMuted}
+          cameraOff={webrtc.cameraOff}
+          mediaNotice={webrtc.mediaNotice}
+          elapsedSeconds={webrtc.elapsedSeconds}
+          onAccept={() => void webrtc.acceptIncomingCall()}
+          onReject={webrtc.rejectIncomingCall}
+          onEnd={webrtc.endCall}
+          onToggleMic={webrtc.toggleMic}
+          onToggleCamera={webrtc.toggleCamera}
+        />
+      )}
+    </div>
+  );
+}

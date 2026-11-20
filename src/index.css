@@ -1,0 +1,50 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Figtree", system-ui, -apple-system, sans-serif;
+  --font-display: "Outfit", system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    font-family: "Figtree", system-ui, -apple-system, sans-serif;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  .font-display {
+    font-family: "Outfit", system-ui, -apple-system, sans-serif;
+  }
+}
+
+.chat-wallpaper {
+  background-color: #EFECE6;
+  background-image: radial-gradient(rgba(15, 118, 110, 0.06) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.dark .chat-wallpaper {
+  background-color: #0D1412;
+  background-image: radial-gradient(rgba(45, 212, 191, 0.05) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
