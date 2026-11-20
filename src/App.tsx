@@ -11,7 +11,7 @@ import { Sidebar } from './components/Sidebar';
 import { useOnlineStatus } from './hooks/usePWAInstall';
 import { usePushNotifications } from './hooks/usePushNotifications';
 import { useWebRTC } from './hooks/useWebRTC';
-import { api, getStoredToken, setStoredToken } from './lib/api';
+import { api, getApiBaseUrl, getStoredToken, setStoredToken } from './lib/api';
 import { firebaseAuth } from './lib/firebase';
 import type {
   CallHistoryItem,
@@ -156,8 +156,19 @@ export default function App() {
 
     const connect = () => {
       if (cancelled) return;
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${proto}//${window.location.host}/ws?token=${encodeURIComponent(token)}`);
+      const apiBaseUrl = getApiBaseUrl();
+      const wsUrl = String(import.meta.env.VITE_WS_URL || '').trim();
+      let socketUrl: string;
+      if (wsUrl) {
+        socketUrl = `${wsUrl.replace(/\/+$/, '')}/ws`;
+      } else if (apiBaseUrl) {
+        const protocol = apiBaseUrl.startsWith('https://') ? 'wss://' : 'ws://';
+        socketUrl = `${protocol}${apiBaseUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '')}/ws`;
+      } else {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        socketUrl = `${protocol}//${window.location.host}/ws`;
+      }
+      const ws = new WebSocket(`${socketUrl}?token=${encodeURIComponent(token)}`);
       wsRef.current = ws;
 
       ws.onopen = () => {

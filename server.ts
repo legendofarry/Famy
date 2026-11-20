@@ -230,6 +230,25 @@ const upload = multer({
 
 async function startServer() {
   const app = express();
+  app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    const configuredOrigins = String(process.env.APP_ORIGIN || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!origin || configuredOrigins.length === 0 || configuredOrigins.includes(origin)) {
+      if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    }
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
   app.use(express.json({ limit: '2mb' }));
   app.use('/uploads', express.static(UPLOADS_DIR));
 
