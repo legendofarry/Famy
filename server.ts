@@ -13,7 +13,6 @@ import { WebSocket, WebSocketServer } from 'ws';
 import {
   createSession,
   createFirebaseUser,
-  createUser,
   deletePushSubscription,
   deletePushSubscriptionByEndpoint,
   deleteSession,
@@ -37,12 +36,11 @@ import {
   seedWelcomeConversationsForNewUser,
   toPublicUser,
   updateLastSeen,
-  verifyPassword,
 } from './server/db.ts';
 import type { UserRow } from './server/db.ts';
 import { fetchLinkPreview } from './server/linkPreview.ts';
 import type { CallMode, CallOutcome, MessageType } from './src/shared/types.ts';
-import { extractUrls, validatePassword, validateUsername } from './src/shared/validation.ts';
+import { extractUrls, validateUsername } from './src/shared/validation.ts';
 
 dotenv.config();
 
@@ -230,25 +228,6 @@ const upload = multer({
 
 async function startServer() {
   const app = express();
-  app.disable('x-powered-by');
-  app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    const configuredOrigins = String(process.env.APP_ORIGIN || '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (!origin || configuredOrigins.length === 0 || configuredOrigins.includes(origin)) {
-      if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    }
-    if (req.method === 'OPTIONS') {
-      res.status(204).end();
-      return;
-    }
-    next();
-  });
   app.use(express.json({ limit: '2mb' }));
   app.use('/uploads', express.static(UPLOADS_DIR));
 
@@ -262,6 +241,15 @@ async function startServer() {
 
     try {
       const decoded = await getAuth().verifyIdToken(idToken);
+      if (decoded.firebase.sign_in_provider !== 'password') {
+        res.status(403).json({ error: 'Please sign in with your email and password.' });
+        return;
+      }
+      if (decoded.email_verified !== true || !decoded.email) {
+        res.status(403).json({ error: 'Please verify your email address before signing in.' });
+        return;
+      }
+
       let user = findUserByFirebaseUid(decoded.uid);
 
       if (!user) {
@@ -288,72 +276,6 @@ async function startServer() {
       const message = error instanceof Error ? error.message : 'Firebase authentication failed.';
       res.status(401).json({ error: message });
     }
-  });
-
-  app.post('/api/auth/signup', (req, res) => {
-    const rawUsername = String(req.body?.username ?? '');
-    const rawPassword = String(req.body?.password ?? '');
-
-    const uCheck = validateUsername(rawUsername);
-    if (!uCheck.ok) {
-      res.status(400).json({ error: uCheck.error });
-      return;
-    }
-
-    const pCheck = validatePassword(rawPassword);
-    if (!pCheck.ok) {
-      res.status(400).json({ error: pCheck.error });
-      return;
-    }
-
-    const existing = findUserByUsername(uCheck.normalized);
-    if (existing) {
-      res.status(409).json({ error: `Username @${uCheck.normalized} is already taken.` });
-      return;
-    }
-
-    const user = createUser(uCheck.normalized, rawPassword, null, 'On Famy');
-    seedWelcomeConversationsForNewUser(user.id);
-    const token = createSession(user.id);
-    const onlineSet = getOnlineUserIds();
-    onlineSet.add(user.id);
-
-    res.status(201).json({
-      token,
-      user: toPublicUser(user, onlineSet),
-    });
-  });
-
-  app.post('/api/auth/signin', (req, res) => {
-    const rawUsername = String(req.body?.username ?? '');
-    const rawPassword = String(req.body?.password ?? '');
-
-    const uCheck = validateUsername(rawUsername);
-    if (!uCheck.ok) {
-      res.status(400).json({ error: uCheck.error });
-      return;
-    }
-
-    if (!rawPassword) {
-      res.status(400).json({ error: 'Password is required.' });
-      return;
-    }
-
-    const user = findUserByUsername(uCheck.normalized);
-    if (!user || !verifyPassword(rawPassword, user.password_hash, user.password_salt)) {
-      res.status(401).json({ error: 'Invalid username or password.' });
-      return;
-    }
-
-    updateLastSeen(user.id);
-    const token = createSession(user.id);
-    const onlineSet = getOnlineUserIds();
-    onlineSet.add(user.id);
-
-    res.json({
-      token,
-      user: toPublicUser(user, onlineSet),
-    });
   });
 
   app.post('/api/auth/signout', requireAuth, (req: AuthedRequest, res) => {

@@ -9,10 +9,6 @@ import type {
 
 const TOKEN_KEY = 'famy_auth_token';
 
-export function getApiBaseUrl(): string {
-  return String(import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
-}
-
 export function getStoredToken(): string | null {
   try {
     return localStorage.getItem(TOKEN_KEY);
@@ -43,7 +39,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set('Content-Type', 'application/json');
   }
 
-  const res = await fetch(`${getApiBaseUrl()}${path}`, { ...init, headers });
+  const res = await fetch(path, { ...init, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(data?.error || `Request failed (${res.status})`);
@@ -56,20 +52,6 @@ export const api = {
     return request<{ token: string; user: UserPublic }>('/api/auth/firebase', {
       method: 'POST',
       body: JSON.stringify({ idToken }),
-    });
-  },
-
-  signup(username: string, password: string) {
-    return request<{ token: string; user: UserPublic }>('/api/auth/signup', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    });
-  },
-
-  signin(username: string, password: string) {
-    return request<{ token: string; user: UserPublic }>('/api/auth/signin', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
     });
   },
 

@@ -141,14 +141,6 @@ export function hashPassword(password: string, salt?: string): { hash: string; s
   return { hash: derived, salt: usedSalt };
 }
 
-export function verifyPassword(password: string, storedHash: string, salt: string): boolean {
-  const { hash } = hashPassword(password, salt);
-  const a = Buffer.from(hash, 'hex');
-  const b = Buffer.from(storedHash, 'hex');
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
-}
-
 export function createUser(username: string, password: string, avatarUrl: string | null = null, bio: string | null = null): UserRow {
   const now = Date.now();
   const id = `usr_${crypto.randomUUID()}`;
