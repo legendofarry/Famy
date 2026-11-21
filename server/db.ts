@@ -100,12 +100,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
 `);
 
-const userColumns = db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>;
-if (!userColumns.some((column) => column.name === 'firebase_uid')) {
-  db.exec('ALTER TABLE users ADD COLUMN firebase_uid TEXT');
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid)');
-}
-
 export interface VapidConfig {
   publicKey: string;
   privateKey: string;
@@ -141,6 +135,14 @@ export function hashPassword(password: string, salt?: string): { hash: string; s
   return { hash: derived, salt: usedSalt };
 }
 
+export function verifyPassword(password: string, storedHash: string, salt: string): boolean {
+  const { hash } = hashPassword(password, salt);
+  const a = Buffer.from(hash, 'hex');
+  const b = Buffer.from(storedHash, 'hex');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 export function createUser(username: string, password: string, avatarUrl: string | null = null, bio: string | null = null): UserRow {
   const now = Date.now();
   const id = `usr_${crypto.randomUUID()}`;
@@ -173,45 +175,6 @@ export interface UserRow {
 
 export function findUserByUsername(username: string): UserRow | undefined {
   return db.prepare('SELECT * FROM users WHERE username = ?').get(username) as UserRow | undefined;
-}
-
-export function findUserByFirebaseUid(firebaseUid: string): UserRow | undefined {
-  return db.prepare('SELECT * FROM users WHERE firebase_uid = ?').get(firebaseUid) as UserRow | undefined;
-}
-
-export function createFirebaseUser(
-  firebaseUid: string,
-  username: string,
-  avatarUrl: string | null = null,
-  bio: string | null = null
-): UserRow {
-  const now = Date.now();
-  let normalizedUsername = username.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24);
-  if (normalizedUsername.length < 3) normalizedUsername = `user_${crypto.randomUUID().slice(0, 8)}`;
-
-  let candidate = normalizedUsername;
-  let suffix = 1;
-  while (findUserByUsername(candidate)) {
-    const suffixText = `_${suffix}`;
-    candidate = `${normalizedUsername.slice(0, 24 - suffixText.length)}${suffixText}`;
-    suffix += 1;
-  }
-
-  const dummy = hashPassword(crypto.randomUUID());
-  db.prepare(
-    'INSERT INTO users (id, username, password_hash, password_salt, avatar_url, bio, created_at, last_seen, firebase_uid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(
-    `usr_${crypto.randomUUID()}`,
-    candidate,
-    dummy.hash,
-    dummy.salt,
-    avatarUrl,
-    bio,
-    now,
-    now,
-    firebaseUid
-  );
-  return findUserByFirebaseUid(firebaseUid)!;
 }
 
 export function findUserById(id: string): UserRow | undefined {
@@ -579,91 +542,4 @@ export function getUserPushSubscriptions(userId: string): StoredPushSub[] {
   return db
     .prepare('SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?')
     .all(userId) as unknown as StoredPushSub[];
-}
-
-export function ensureStarterContactsAndChats(): void {
-  const starters = [
-    {
-      username: 'maya',
-      avatar: '/src/assets/images/avatar_maya_1795170629337.jpg',
-      bio: 'Product Designer · Available for calls',
-    },
-    {
-      username: 'liam',
-      avatar: '/src/assets/images/avatar_liam_1795170628413.jpg',
-      bio: 'Studio Architect',
-    },
-    {
-      username: 'sofia',
-      avatar: '/src/assets/images/avatar_sofia_1795170629066.jpg',
-      bio: 'Engineering Lead',
-    },
-  ];
-
-  for (const s of starters) {
-    const existing = findUserByUsername(s.username);
-    if (!existing) {
-      createUser(s.username, 'famy1234', s.avatar, s.bio);
-    }
-  }
-}
-
-export function seedWelcomeConversationsForNewUser(userId: string): void {
-  const maya = findUserByUsername('maya');
-  const liam = findUserByUsername('liam');
-  const now = Date.now();
-
-  if (maya && maya.id !== userId) {
-    const convId = getOrCreateDirectConversation(userId, maya.id);
-    const existingMsgs = getConversationMessages(convId);
-    if (existingMsgs.length === 0) {
-      insertMessage({
-        conversationId: convId,
-        senderId: maya.id,
-        type: 'text',
-        body: 'Welcome to Famy! Enable device notifications so voice and video calls ring even when the app is closed.',
-        createdAt: now - 1000 * 60 * 18,
-      });
-      insertMessage({
-        conversationId: convId,
-        senderId: maya.id,
-        type: 'image',
-        body: 'Morning light at the studio cafe',
-        mediaUrl: '/src/assets/images/shared_cafe_photo_1795170629016.jpg',
-        mediaMime: 'image/jpeg',
-        mediaName: 'studio-cafe.jpg',
-        createdAt: now - 1000 * 60 * 16,
-      });
-    }
-  }
-
-  if (liam && liam.id !== userId) {
-    const convId = getOrCreateDirectConversation(userId, liam.id);
-    const existingMsgs = getConversationMessages(convId);
-    if (existingMsgs.length === 0) {
-      insertMessage({
-        conversationId: convId,
-        senderId: liam.id,
-        type: 'link',
-        body: 'Shared the architecture notes for tomorrow: https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API',
-        link: {
-          url: 'https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API',
-          title: 'WebRTC API — MDN Web Docs',
-          description: 'Real-time peer-to-peer audio, video, and data communication on the web.',
-          domain: 'developer.mozilla.org',
-        },
-        createdAt: now - 1000 * 60 * 45,
-      });
-      insertMessage({
-        conversationId: convId,
-        senderId: liam.id,
-        type: 'call',
-        body: '',
-        callType: 'video',
-        callStatus: 'completed',
-        callDuration: 184,
-        createdAt: now - 1000 * 60 * 35,
-      });
-    }
-  }
 }

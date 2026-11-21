@@ -1,6 +1,9 @@
 {
   "name": "Famy",
   "description": "Modern real-time messaging, voice and video calling, media sharing, and push-enabled PWA.",
-  "requestFramePermissions": ["camera", "microphone"],
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
   "majorCapabilities": []
 }

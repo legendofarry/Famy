@@ -1,15 +1,8 @@
 import React, { useState } from 'react';
-import { BellRing, MessageSquare, PhoneCall, Video } from 'lucide-react';
-import { FirebaseError } from 'firebase/app';
-import {
-  createUserWithEmailAndPassword,
-  sendEmailVerification,
-  signInWithEmailAndPassword,
-  signOut,
-} from 'firebase/auth';
+import { ArrowRight, BellRing, Lock, MessageSquare, PhoneCall, Video } from 'lucide-react';
 import { api, setStoredToken } from '../lib/api';
-import { firebaseAuth } from '../lib/firebase';
 import type { UserPublic } from '../shared/types';
+import { validatePassword, validateUsername } from '../shared/validation';
 
 interface AuthScreenProps {
   onAuthenticated: (user: UserPublic) => void;
@@ -17,63 +10,41 @@ interface AuthScreenProps {
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
   const [mode, setMode] = useState<'signup' | 'signin'>('signup');
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError(null);
-    setNotice(null);
+
+    const uCheck = validateUsername(username);
+    if (!uCheck.ok) {
+      setError(uCheck.error || 'Enter a valid username.');
+      return;
+    }
+
+    const pCheck = validatePassword(password);
+    if (!pCheck.ok) {
+      setError(pCheck.error || 'Enter a valid password.');
+      return;
+    }
+
     setSubmitting(true);
-
     try {
-      const credential =
+      const res =
         mode === 'signup'
-          ? await createUserWithEmailAndPassword(firebaseAuth, email.trim(), password)
-          : await signInWithEmailAndPassword(firebaseAuth, email.trim(), password);
-
-      if (mode === 'signup') {
-        try {
-          await sendEmailVerification(credential.user);
-        } catch (verificationError: unknown) {
-          await signOut(firebaseAuth);
-          setMode('signin');
-          throw new Error(
-            `Your account was created, but we couldn't send the verification email. ${getAuthErrorMessage(verificationError)}`
-          );
-        }
-
-        await signOut(firebaseAuth);
-        setMode('signin');
-        setNotice(`We sent a verification link to ${email.trim()}. Verify your email, then sign in.`);
-        return;
-      }
-
-      if (!credential.user.emailVerified) {
-        try {
-          await sendEmailVerification(credential.user);
-        } finally {
-          await signOut(firebaseAuth);
-        }
-        setNotice(`Your email isn't verified yet. We sent a new verification link to ${email.trim()}.`);
-        return;
-      }
-
-      const idToken = await credential.user.getIdToken(true);
-      const res = await api.firebaseSignin(idToken);
+          ? await api.signup(uCheck.normalized, password)
+          : await api.signin(uCheck.normalized, password);
       setStoredToken(res.token);
       onAuthenticated(res.user);
     } catch (err: unknown) {
-      setError(getAuthErrorMessage(err));
+      setError(err instanceof Error ? err.message : 'Unable to sign in.');
     } finally {
       setSubmitting(false);
     }
   };
-
-  const authHeading = mode === 'signup' ? 'Create your account' : 'Welcome back';
 
   return (
     <div className="min-h-screen w-full bg-[#F6F7F5] dark:bg-[#0B110F] text-[#111815] dark:text-[#F1F5F3] flex flex-col lg:grid lg:grid-cols-12">
@@ -94,7 +65,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
             Direct calls, shared moments, and instant alerts on every device.
           </h1>
           <p className="text-base xl:text-lg text-white/85 leading-relaxed max-w-lg">
-            Create an account with your email and password. Verify your email to start chatting and calling.
+            Start chatting and calling with just a unique username. No email address, no waiting — your account activates the second you join.
           </p>
 
           <div className="grid grid-cols-2 gap-6 pt-4 border-t border-white/15">
@@ -138,7 +109,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
         </div>
 
         <p className="text-xs text-white/70">
-          Email-verified accounts · Private messaging · Real-time calls &amp; alerts
+          Username-only identity · Instant activation · Real-time WebSocket &amp; Web Push
         </p>
       </section>
 
@@ -164,51 +135,107 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
 
           <div className="space-y-2">
             <h2 className="font-display text-3xl font-semibold tracking-tight [text-wrap:balance]">
-              {authHeading}
+              {mode === 'signup' ? 'Claim your username' : 'Welcome back'}
             </h2>
             <p className="text-sm text-[#5B6862] dark:text-[#9AA8A1]">
               {mode === 'signup'
-                ? 'Sign up with your email address and create a password.'
-                : 'Sign in with your email and password. Email verification is required.'}
+                ? 'Choose a unique username and password. No email required — active immediately.'
+                : 'Sign in with your Famy username and password.'}
             </p>
           </div>
 
+          {/* Segmented Switch */}
           <div
             role="tablist"
             aria-label="Account mode"
             className="grid grid-cols-2 gap-1 p-1 bg-[#EAECE9] dark:bg-[#17211D] rounded-xl"
           >
-            {(['signup', 'signin'] as const).map((nextMode) => (
-              <button
-                key={nextMode}
-                type="button"
-                role="tab"
-                aria-selected={mode === nextMode}
-                onClick={() => {
-                  setMode(nextMode);
-                  setError(null);
-                  setNotice(null);
-                }}
-                className={`min-h-[44px] px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                  mode === nextMode
-                    ? 'bg-white dark:bg-[#23312B] text-[#111815] dark:text-white shadow-xs'
-                    : 'text-[#5B6862] dark:text-[#9AA8A1] hover:text-[#111815] dark:hover:text-white'
-                }`}
-              >
-                {nextMode === 'signup' ? 'Create Account' : 'Sign In'}
-              </button>
-            ))}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'signup'}
+              onClick={() => {
+                setMode('signup');
+                setError(null);
+              }}
+              className={`min-h-[44px] px-4 py-2 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
+                mode === 'signup'
+                  ? 'bg-white dark:bg-[#23312B] text-[#111815] dark:text-white shadow-xs'
+                  : 'text-[#5B6862] dark:text-[#9AA8A1] hover:text-[#111815] dark:hover:text-white'
+              }`}
+            >
+              Create Account
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'signin'}
+              onClick={() => {
+                setMode('signin');
+                setError(null);
+              }}
+              className={`min-h-[44px] px-4 py-2 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
+                mode === 'signin'
+                  ? 'bg-white dark:bg-[#23312B] text-[#111815] dark:text-white shadow-xs'
+                  : 'text-[#5B6862] dark:text-[#9AA8A1] hover:text-[#111815] dark:hover:text-white'
+              }`}
+            >
+              Sign In
+            </button>
           </div>
 
-          <div className="space-y-4">
-            {notice && (
-              <div
-                role="status"
-                className="p-3 rounded-xl bg-[#ECFDF5] dark:bg-[#12312A] border border-[#A7F3D0] dark:border-[#166534] text-sm text-[#047857] dark:text-[#6EE7B7]"
-              >
-                {notice}
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            <div className="space-y-1.5">
+              <label htmlFor="famy-username" className="block text-sm font-medium">
+                Username
+              </label>
+              <div className="relative">
+                <span
+                  aria-hidden="true"
+                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#6B7872] font-medium select-none"
+                >
+                  @
+                </span>
+                <input
+                  id="famy-username"
+                  name="username"
+                  type="text"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="your_username"
+                  className="w-full min-h-[46px] pl-8 pr-4 py-2.5 rounded-xl bg-white dark:bg-[#141D1A] border border-[#DCE1DC] dark:border-[#273530] text-sm focus:outline-none focus:ring-2 focus:ring-[#0F766E] focus:border-transparent transition"
+                />
               </div>
-            )}
+              <p className="text-xs text-[#6B7872] dark:text-[#8E9C95]">
+                3–24 characters · letters, numbers, underscores only
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="famy-password" className="block text-sm font-medium">
+                Password
+              </label>
+              <div className="relative">
+                <Lock
+                  aria-hidden="true"
+                  className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#6B7872]"
+                />
+                <input
+                  id="famy-password"
+                  name="password"
+                  type="password"
+                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="At least 6 characters"
+                  className="w-full min-h-[46px] pl-10 pr-4 py-2.5 rounded-xl bg-white dark:bg-[#141D1A] border border-[#DCE1DC] dark:border-[#273530] text-sm focus:outline-none focus:ring-2 focus:ring-[#0F766E] focus:border-transparent transition"
+                />
+              </div>
+            </div>
+
             {error && (
               <div
                 role="alert"
@@ -218,83 +245,26 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-1.5">
-                <label htmlFor="famy-email" className="block text-sm font-medium">
-                  Email
-                </label>
-                <input
-                  id="famy-email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  autoCapitalize="none"
-                  required
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-white dark:bg-[#141D1A] border border-[#DCE1DC] dark:border-[#273530] text-sm focus:outline-none focus:ring-2 focus:ring-[#0F766E] focus:border-transparent transition"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label htmlFor="famy-password" className="block text-sm font-medium">
-                  Password
-                </label>
-                <input
-                  id="famy-password"
-                  name="password"
-                  type="password"
-                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                  minLength={6}
-                  maxLength={128}
-                  required
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="At least 6 characters"
-                  className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-white dark:bg-[#141D1A] border border-[#DCE1DC] dark:border-[#273530] text-sm focus:outline-none focus:ring-2 focus:ring-[#0F766E] focus:border-transparent transition"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="w-full min-h-[48px] px-5 py-3 rounded-xl bg-[#0F766E] hover:bg-[#0D655E] disabled:opacity-60 text-white font-medium text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer"
-              >
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full min-h-[48px] px-5 py-3 rounded-xl bg-[#0F766E] hover:bg-[#0D655E] disabled:opacity-60 text-white font-medium text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            >
+              <span>
                 {submitting
                   ? mode === 'signup'
                     ? 'Creating account...'
                     : 'Signing in...'
                   : mode === 'signup'
-                    ? 'Create Account'
-                    : 'Sign In'}
-              </button>
-            </form>
-          </div>
+                    ? 'Create Account & Start'
+                    : 'Sign In to Famy'}
+              </span>
+              <ArrowRight className="w-4 h-4" aria-hidden="true" />
+            </button>
+          </form>
+
         </div>
       </main>
     </div>
   );
 };
-
-function getAuthErrorMessage(error: unknown): string {
-  if (error instanceof FirebaseError) {
-    switch (error.code) {
-      case 'auth/email-already-in-use':
-        return 'An account already exists for this email. Try signing in.';
-      case 'auth/invalid-credential':
-        return 'Email or password is incorrect.';
-      case 'auth/invalid-email':
-        return 'Enter a valid email address.';
-      case 'auth/weak-password':
-        return 'Choose a password with at least 6 characters.';
-      case 'auth/too-many-requests':
-        return 'Too many attempts. Please wait a while and try again.';
-      case 'auth/network-request-failed':
-        return 'Network error. Check your connection and try again.';
-      default:
-        return error.message;
-    }
-  }
-  return error instanceof Error ? error.message : 'Unable to authenticate.';
-}

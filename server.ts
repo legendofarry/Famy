@@ -4,21 +4,17 @@ import http from 'node:http';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import express from 'express';
-import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
 import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { sendNotification, setVapidDetails } from 'web-push';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
   createSession,
-  createFirebaseUser,
+  createUser,
   deletePushSubscription,
   deletePushSubscriptionByEndpoint,
   deleteSession,
-  ensureStarterContactsAndChats,
   findUserById,
-  findUserByFirebaseUid,
   findUserByUsername,
   getConversationMemberIds,
   getConversationMessages,
@@ -33,31 +29,21 @@ import {
   markConversationRead,
   savePushSubscription,
   searchUsers,
-  seedWelcomeConversationsForNewUser,
   toPublicUser,
   updateLastSeen,
+  verifyPassword,
 } from './server/db.ts';
 import type { UserRow } from './server/db.ts';
 import { fetchLinkPreview } from './server/linkPreview.ts';
 import type { CallMode, CallOutcome, MessageType } from './src/shared/types.ts';
-import { extractUrls, validateUsername } from './src/shared/validation.ts';
+import { extractUrls, validatePassword, validateUsername } from './src/shared/validation.ts';
 
 dotenv.config();
-
-if (getApps().length === 0) {
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  initializeApp(
-    serviceAccountJson
-      ? { credential: cert(JSON.parse(serviceAccountJson)), projectId: 'famy-app-ae3ce' }
-      : { credential: applicationDefault(), projectId: 'famy-app-ae3ce' }
-  );
-}
 
 const PORT = Number(process.env.PORT || 3000);
 const UPLOADS_DIR = path.resolve(process.cwd(), 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
-ensureStarterContactsAndChats();
 const vapid = getOrCreateVapidKeys();
 setVapidDetails('mailto:alerts@famy.app', vapid.publicKey, vapid.privateKey);
 
@@ -232,50 +218,69 @@ async function startServer() {
   app.use('/uploads', express.static(UPLOADS_DIR));
 
   // --- Auth Endpoints (Username + Password Only, Immediate Activation) ---
-  app.post('/api/auth/firebase', async (req, res) => {
-    const idToken = String(req.body?.idToken ?? '');
-    if (!idToken) {
-      res.status(400).json({ error: 'Firebase ID token is required.' });
+  app.post('/api/auth/signup', (req, res) => {
+    const rawUsername = String(req.body?.username ?? '');
+    const rawPassword = String(req.body?.password ?? '');
+
+    const uCheck = validateUsername(rawUsername);
+    if (!uCheck.ok) {
+      res.status(400).json({ error: uCheck.error });
       return;
     }
 
-    try {
-      const decoded = await getAuth().verifyIdToken(idToken);
-      if (decoded.firebase.sign_in_provider !== 'password') {
-        res.status(403).json({ error: 'Please sign in with your email and password.' });
-        return;
-      }
-      if (decoded.email_verified !== true || !decoded.email) {
-        res.status(403).json({ error: 'Please verify your email address before signing in.' });
-        return;
-      }
-
-      let user = findUserByFirebaseUid(decoded.uid);
-
-      if (!user) {
-        const baseUsername =
-          decoded.name ||
-          (typeof decoded.email === 'string' ? decoded.email.split('@')[0] : '') ||
-          `google_${decoded.uid.slice(0, 8)}`;
-        user = createFirebaseUser(
-          decoded.uid,
-          baseUsername,
-          typeof decoded.picture === 'string' ? decoded.picture : null,
-          'On Famy'
-        );
-        seedWelcomeConversationsForNewUser(user.id);
-      }
-
-      updateLastSeen(user.id);
-      const token = createSession(user.id);
-      res.json({
-        token,
-        user: toPublicUser(user, new Set(getOnlineUserIds()).add(user.id)),
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Firebase authentication failed.';
-      res.status(401).json({ error: message });
+    const pCheck = validatePassword(rawPassword);
+    if (!pCheck.ok) {
+      res.status(400).json({ error: pCheck.error });
+      return;
     }
+
+    const existing = findUserByUsername(uCheck.normalized);
+    if (existing) {
+      res.status(409).json({ error: `Username @${uCheck.normalized} is already taken.` });
+      return;
+    }
+
+    const user = createUser(uCheck.normalized, rawPassword, null, null);
+    const token = createSession(user.id);
+    const onlineSet = getOnlineUserIds();
+    onlineSet.add(user.id);
+
+    res.status(201).json({
+      token,
+      user: toPublicUser(user, onlineSet),
+    });
+  });
+
+  app.post('/api/auth/signin', (req, res) => {
+    const rawUsername = String(req.body?.username ?? '');
+    const rawPassword = String(req.body?.password ?? '');
+
+    const uCheck = validateUsername(rawUsername);
+    if (!uCheck.ok) {
+      res.status(400).json({ error: uCheck.error });
+      return;
+    }
+
+    if (!rawPassword) {
+      res.status(400).json({ error: 'Password is required.' });
+      return;
+    }
+
+    const user = findUserByUsername(uCheck.normalized);
+    if (!user || !verifyPassword(rawPassword, user.password_hash, user.password_salt)) {
+      res.status(401).json({ error: 'Invalid username or password.' });
+      return;
+    }
+
+    updateLastSeen(user.id);
+    const token = createSession(user.id);
+    const onlineSet = getOnlineUserIds();
+    onlineSet.add(user.id);
+
+    res.json({
+      token,
+      user: toPublicUser(user, onlineSet),
+    });
   });
 
   app.post('/api/auth/signout', requireAuth, (req: AuthedRequest, res) => {
@@ -505,9 +510,9 @@ async function startServer() {
         ? {
             kind: 'call',
             title: 'Incoming Famy Video Call',
-            body: '@maya is calling you on Famy',
+            body: 'A test video call is ringing.',
             callId: `test_${Date.now()}`,
-            callerUsername: 'maya',
+            callerUsername: 'Famy',
             callMode: 'video',
           }
         : {

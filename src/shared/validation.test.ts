@@ -10,14 +10,14 @@ import {
 } from './validation';
 
 test('validateUsername normalizes @ prefix and lowercase', () => {
-  const res = validateUsername('  @Maya_Studio ');
+  const res = validateUsername('  @Alex_Studio ');
   assert.equal(res.ok, true);
-  assert.equal(res.normalized, 'maya_studio');
+  assert.equal(res.normalized, 'alex_studio');
 });
 
 test('validateUsername rejects invalid characters and short names', () => {
   assert.equal(validateUsername('ab').ok, false);
-  assert.equal(validateUsername('maya@home.com').ok, false);
+  assert.equal(validateUsername('alex@home.com').ok, false);
   assert.equal(validateUsername('hello world').ok, false);
 });
 
@@ -50,7 +50,7 @@ test('formatMessageTime handles today, yesterday, and older dates', () => {
 });
 
 test('getInitials generates clean 2-character initials', () => {
-  assert.equal(getInitials('maya_lin'), 'ML');
-  assert.equal(getInitials('liam'), 'LI');
+  assert.equal(getInitials('alex_lin'), 'AL');
+  assert.equal(getInitials('sam'), 'SA');
   assert.equal(getInitials(''), 'FM');
 });

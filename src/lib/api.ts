@@ -48,10 +48,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  firebaseSignin(idToken: string) {
-    return request<{ token: string; user: UserPublic }>('/api/auth/firebase', {
+  signup(username: string, password: string) {
+    return request<{ token: string; user: UserPublic }>('/api/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ idToken }),
+      body: JSON.stringify({ username, password }),
+    });
+  },
+
+  signin(username: string, password: string) {
+    return request<{ token: string; user: UserPublic }>('/api/auth/signin', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
     });
   },
 

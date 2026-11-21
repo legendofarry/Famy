@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { signOut } from 'firebase/auth';
 import { BellRing, MessageSquare, WifiOff } from 'lucide-react';
 import { AuthScreen } from './components/AuthScreen';
 import { CallOverlay } from './components/CallOverlay';
@@ -12,7 +11,6 @@ import { useOnlineStatus } from './hooks/usePWAInstall';
 import { usePushNotifications } from './hooks/usePushNotifications';
 import { useWebRTC } from './hooks/useWebRTC';
 import { api, getStoredToken, setStoredToken } from './lib/api';
-import { firebaseAuth } from './lib/firebase';
 import type {
   CallHistoryItem,
   CallMode,
@@ -348,11 +346,6 @@ export default function App() {
       await api.signout();
     } catch {
       // Ignore network errors on signout
-    }
-    try {
-      await signOut(firebaseAuth);
-    } catch {
-      // Ignore Firebase client signout errors
     }
     setStoredToken(null);
     setUser(null);
