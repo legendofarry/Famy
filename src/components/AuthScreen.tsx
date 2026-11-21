@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { ArrowRight, BellRing, Lock, MessageSquare, PhoneCall, Video } from 'lucide-react';
+import { ArrowRight, BellRing, Download, Lock, MessageSquare, PhoneCall, Video } from 'lucide-react';
 import { api, setStoredToken } from '../lib/api';
+import { usePWAInstall } from '../hooks/usePWAInstall';
 import type { UserPublic } from '../shared/types';
 import { validatePassword, validateUsername } from '../shared/validation';
 
@@ -9,6 +10,7 @@ interface AuthScreenProps {
 }
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
+  const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [mode, setMode] = useState<'signup' | 'signin'>('signup');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -143,6 +145,33 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                 : 'Sign in with your Famy username and password.'}
             </p>
           </div>
+
+          {!isInstalled && (
+            <section className="flex items-center gap-3 rounded-2xl border border-[#DCE1DC] dark:border-[#273530] bg-white/70 dark:bg-[#141D1A] p-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#E6F4F1] dark:bg-[#173A35] text-[#0F766E]">
+                <Download className="h-5 w-5" aria-hidden="true" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">Get Famy on your device</p>
+                <p className="text-xs text-[#5B6862] dark:text-[#9AA8A1]">
+                  {isInstallable
+                    ? 'Install for a full-screen app experience and quick access.'
+                    : isIOS
+                      ? 'Use Share, then “Add to Home Screen”.'
+                      : 'Use your browser menu to install or add Famy to your home screen.'}
+                </p>
+              </div>
+              {isInstallable && (
+                <button
+                  type="button"
+                  onClick={() => void install()}
+                  className="min-h-10 shrink-0 rounded-xl bg-[#0F766E] px-3 text-sm font-medium text-white hover:bg-[#0D655E]"
+                >
+                  Install
+                </button>
+              )}
+            </section>
+          )}
 
           {/* Segmented Switch */}
           <div
