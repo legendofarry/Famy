@@ -10,7 +10,8 @@ import { Sidebar } from './components/Sidebar';
 import { useOnlineStatus } from './hooks/usePWAInstall';
 import { usePushNotifications } from './hooks/usePushNotifications';
 import { useWebRTC } from './hooks/useWebRTC';
-import { api, getStoredToken, setStoredToken } from './lib/api';
+import { api, getStoredToken } from './lib/api';
+import { getSignedInProfile, signOutFamy } from './lib/firebaseAuth';
 import type {
   CallHistoryItem,
   CallMode,
@@ -76,22 +77,12 @@ export default function App() {
 
   // Verify existing session on boot
   useEffect(() => {
-    const token = getStoredToken();
-    if (!token) {
-      setAuthChecking(false);
-      return;
-    }
-    api
-      .me()
-      .then((res) => {
-        setUser(res.user);
-      })
-      .catch(() => {
-        setStoredToken(null);
-      })
-      .finally(() => {
-        setAuthChecking(false);
-      });
+    let active = true;
+    getSignedInProfile()
+      .then((profile) => { if (active) setUser(profile); })
+      .catch(() => { if (active) setUser(null); })
+      .finally(() => { if (active) setAuthChecking(false); });
+    return () => { active = false; };
   }, []);
 
   const loadWorkspaceData = useCallback(async () => {
@@ -115,6 +106,10 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     void loadWorkspaceData();
+    // Firestore is the source of truth; refresh while the app is open until
+    // the realtime signaling layer is enabled.
+    const timer = window.setInterval(() => { void loadWorkspaceData(); }, 5000);
+    return () => window.clearInterval(timer);
   }, [user, loadWorkspaceData]);
 
   // Load messages whenever activeConversationId changes
@@ -137,8 +132,15 @@ export default function App() {
         if (active) setLoadingMessages(false);
       });
 
+    const refreshTimer = window.setInterval(() => {
+      api.listMessages(activeConversationId).then((res) => {
+        if (active) setMessagesByConv((prev) => ({ ...prev, [activeConversationId]: res.messages }));
+      }).catch(() => {});
+    }, 2500);
+
     return () => {
       active = false;
+      window.clearInterval(refreshTimer);
     };
   }, [user, activeConversationId]);
 
@@ -343,11 +345,10 @@ export default function App() {
 
   const handleSignOut = async () => {
     try {
-      await api.signout();
+      await signOutFamy();
     } catch {
-      // Ignore network errors on signout
+      // Firebase handles session revocation.
     }
-    setStoredToken(null);
     setUser(null);
     setConversations([]);
     setMessagesByConv({});
@@ -371,7 +372,8 @@ export default function App() {
     return <AuthScreen onAuthenticated={(loggedInUser) => setUser(loggedInUser)} />;
   }
 
-  const notificationsReady = push.permission === 'granted' && push.isSubscribed;
+  // The push feature is intentionally parked while auth and messaging move to Firebase.
+  const notificationsReady = true;
   const showMobileChat = Boolean(activeConversation);
 
   return (

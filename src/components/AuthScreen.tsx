@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowRight, BellRing, Download, Lock, MessageSquare, PhoneCall, Video } from 'lucide-react';
-import { api, setStoredToken } from '../lib/api';
+import { createFamyAccount, signInFamyAccount } from '../lib/firebaseAuth';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import type { UserPublic } from '../shared/types';
 import { validatePassword, validateUsername } from '../shared/validation';
@@ -35,12 +35,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
 
     setSubmitting(true);
     try {
-      const res =
+      const signedInUser =
         mode === 'signup'
-          ? await api.signup(uCheck.normalized, password)
-          : await api.signin(uCheck.normalized, password);
-      setStoredToken(res.token);
-      onAuthenticated(res.user);
+          ? await createFamyAccount(uCheck.normalized, password)
+          : await signInFamyAccount(uCheck.normalized, password);
+      onAuthenticated(signedInUser);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to sign in.');
     } finally {

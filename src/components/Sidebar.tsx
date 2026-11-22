@@ -164,7 +164,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <MessageSquarePlus className="w-5 h-5" />
           </button>
 
-          <button
+          {push.supported && <button
             type="button"
             onClick={onOpenNotificationsModal}
             aria-label={notificationsReady ? 'Notification settings' : 'Set up notifications'}
@@ -176,7 +176,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }`}
           >
             {notificationsReady ? <BellRing className="w-5 h-5" /> : <Bell className="w-5 h-5" />}
-          </button>
+          </button>}
 
           <button
             type="button"
