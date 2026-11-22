@@ -48,9 +48,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#F6F7F5] dark:bg-[#0B110F] text-[#111815] dark:text-[#F1F5F3] flex flex-col lg:grid lg:grid-cols-12">
+    <div className="auth-landing relative isolate min-h-dvh w-full overflow-hidden text-white flex flex-col lg:grid lg:grid-cols-12">
+      <div aria-hidden="true" className="auth-aurora" />
+      <div aria-hidden="true" className="auth-orb auth-orb-one" />
+      <div aria-hidden="true" className="auth-orb auth-orb-two" />
+      <div aria-hidden="true" className="auth-grid" />
       {/* Left Brand Showcase (Desktop) */}
-      <section className="hidden lg:flex lg:col-span-6 xl:col-span-7 flex-col justify-between p-12 xl:p-16 bg-[#0F766E] text-white relative overflow-hidden">
+      <section className="auth-brand relative z-10 hidden lg:flex lg:col-span-6 xl:col-span-7 flex-col justify-between p-12 xl:p-16 text-white overflow-hidden">
         <div className="flex items-center gap-3">
           <img
             src="/icon.svg"
@@ -62,10 +66,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
         </div>
 
         <div className="max-w-xl my-auto space-y-8">
-          <h1 className="font-display text-4xl xl:text-5xl font-semibold tracking-tight leading-[1.12] [text-wrap:balance]">
-            Direct calls, shared moments, and instant alerts on every device.
+          <div className="auth-eyebrow"><span className="auth-live-dot" /> YOUR SPACE TO STAY CLOSE</div>
+          <h1 className="font-display text-5xl xl:text-6xl font-semibold tracking-tight leading-[1.04] [text-wrap:balance]">
+            Your people,<br /><span className="auth-gradient-text">one tap away.</span>
           </h1>
-          <p className="text-base xl:text-lg text-white/85 leading-relaxed max-w-lg">
+          <p className="text-base xl:text-lg text-slate-300 leading-relaxed max-w-lg">
             Start chatting and calling with just a unique username. No email address, no waiting — your account activates the second you join.
           </p>
 
@@ -82,10 +87,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-sm font-medium text-white">
                 <BellRing className="w-4 h-4 text-[#99F6E4]" aria-hidden="true" />
-                <span>Background Push Alerts</span>
+                <span>Private conversations</span>
               </div>
               <p className="text-sm text-white/75">
-                Receive incoming call notifications even when Famy is closed.
+                Keep your favorite people just a message away.
               </p>
             </div>
             <div className="space-y-1.5">
@@ -115,9 +120,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
       </section>
 
       {/* Right Auth Form */}
-      <main className="flex-1 lg:col-span-6 xl:col-span-5 flex items-center justify-center p-6 sm:p-10">
-        <div className="w-full max-w-md space-y-7">
-          <div className="flex items-center gap-3 lg:hidden">
+      <main className="auth-main relative z-10 flex-1 lg:col-span-6 xl:col-span-5 flex items-center justify-center p-5 sm:p-10">
+        <div className="auth-card w-full max-w-md space-y-6 sm:space-y-7">
+          <div className="auth-mobile-brand flex items-center gap-3 lg:hidden">
             <img
               src="/icon.svg"
               alt="Famy logo"
@@ -134,8 +139,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
             </div>
           </div>
 
+          <div className="auth-mobile-hero lg:hidden">
+            <div className="auth-eyebrow"><span className="auth-live-dot" /> YOUR SPACE TO STAY CLOSE</div>
+            <p className="font-display text-[1.35rem] font-semibold leading-tight tracking-tight text-slate-950">
+              Your people, closer every day.
+            </p>
+          </div>
+
           <div className="space-y-2">
-            <h2 className="font-display text-3xl font-semibold tracking-tight [text-wrap:balance]">
+            <h2 className="font-display text-2xl sm:text-3xl font-semibold tracking-tight [text-wrap:balance]">
               {mode === 'signup' ? 'Claim your username' : 'Welcome back'}
             </h2>
             <p className="text-sm text-[#5B6862] dark:text-[#9AA8A1]">

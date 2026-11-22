@@ -42,6 +42,8 @@ export interface MessageItem {
 export interface ConversationSummary {
   id: string;
   peer: UserPublic;
+  isGroup?: boolean;
+  memberIds?: string[];
   lastMessage: MessageItem | null;
   unreadCount: number;
   updatedAt: number;

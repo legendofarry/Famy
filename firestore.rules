@@ -2,12 +2,25 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
+    function isLegend() { return signedIn() && request.auth.token.email == 'legend@users.famy-app.invalid'; }
     function member(data) { return signedIn() && request.auth.uid in data.memberIds; }
+    function canSeeProfile(data) {
+      return signedIn() && (data.username != 'lucy' || data.uid == request.auth.uid || isLegend());
+    }
+    function membersRespectLucy(members) {
+      let lucyPath = /databases/$(database)/documents/usernames/lucy;
+      return isLegend() || !exists(lucyPath) || !(get(lucyPath).data.uid in members);
+    }
+    function canReadMembers(members) {
+      let lucyPath = /databases/$(database)/documents/usernames/lucy;
+      return !exists(lucyPath) || !(get(lucyPath).data.uid in members)
+        || isLegend() || request.auth.uid == get(lucyPath).data.uid;
+    }
 
     // Username index is readable for username search. A user can only claim
     // their own username and cannot change the owner after creation.
     match /usernames/{username} {
-      allow read: if signedIn();
+      allow read: if signedIn() && (resource.data.username != 'lucy' || isLegend() || resource.data.uid == request.auth.uid);
       allow create: if signedIn()
         && request.auth.token.email == username + '@users.famy-app.invalid'
         && request.resource.data.uid == request.auth.uid
@@ -16,7 +29,7 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read: if signedIn();
+      allow read: if canSeeProfile(resource.data);
       allow create: if signedIn() && request.auth.uid == uid
         && request.resource.data.uid == uid;
       allow update: if signedIn() && request.auth.uid == uid
@@ -25,10 +38,18 @@ service cloud.firestore {
     }
 
     match /conversations/{conversationId} {
-      allow read: if member(resource.data);
-      allow create: if signedIn() && request.auth.uid in request.resource.data.memberIds
-        && request.resource.data.memberIds.size() == 2;
-      allow update: if member(resource.data)
+      allow read: if member(resource.data) && canReadMembers(resource.data.memberIds);
+      allow create: if signedIn()
+        && request.auth.uid in request.resource.data.memberIds
+        && request.resource.data.memberIds.size() >= 2
+        && membersRespectLucy(request.resource.data.memberIds)
+        && ((request.resource.data.isGroup == true
+              && request.resource.data.groupName is string
+              && request.resource.data.groupName.size() >= 2
+              && request.resource.data.groupName.size() <= 40)
+            || (request.resource.data.isGroup != true
+              && request.resource.data.memberIds.size() == 2));
+      allow update: if member(resource.data) && canReadMembers(resource.data.memberIds)
         && request.resource.data.memberIds == resource.data.memberIds;
       allow delete: if false;
 
@@ -36,19 +57,23 @@ service cloud.firestore {
         function parent() {
           return get(/databases/$(database)/documents/conversations/$(conversationId)).data;
         }
-        allow read: if signedIn() && request.auth.uid in parent().memberIds;
+        allow read: if signedIn() && request.auth.uid in parent().memberIds
+          && canReadMembers(parent().memberIds);
         allow create: if signedIn() && request.auth.uid in parent().memberIds
+          && canReadMembers(parent().memberIds)
           && request.resource.data.senderId == request.auth.uid;
         allow update: if signedIn() && request.auth.uid in parent().memberIds
+          && canReadMembers(parent().memberIds)
           && request.resource.data.senderId == resource.data.senderId;
         allow delete: if false;
       }
     }
 
     match /calls/{callId} {
-      allow read: if signedIn() && request.auth.uid in resource.data.memberIds;
-      allow create: if signedIn() && request.auth.uid in request.resource.data.memberIds;
-      allow update: if signedIn() && request.auth.uid in resource.data.memberIds
+      allow read: if signedIn() && request.auth.uid in resource.data.memberIds && canReadMembers(resource.data.memberIds);
+      allow create: if signedIn() && request.auth.uid in request.resource.data.memberIds
+        && membersRespectLucy(request.resource.data.memberIds);
+      allow update: if signedIn() && request.auth.uid in resource.data.memberIds && canReadMembers(resource.data.memberIds)
         && request.resource.data.memberIds == resource.data.memberIds;
       allow delete: if false;
     }

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   Bell,
   BellRing,
+  Check,
   LogOut,
   MessageSquarePlus,
   Moon,
@@ -36,6 +37,7 @@ interface SidebarProps {
   onConversationCreated: (conv: ConversationSummary) => void;
   onStartCall: (convId: string, peer: UserPublic, mode: CallMode) => void;
   onOpenNotificationsModal: () => void;
+  onOpenProfile: () => void;
   onToggleDarkMode: () => void;
   onSignOut: () => void;
 }
@@ -54,6 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onConversationCreated,
   onStartCall,
   onOpenNotificationsModal,
+  onOpenProfile,
   onToggleDarkMode,
   onSignOut,
 }) => {
@@ -64,6 +67,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [foundUsers, setFoundUsers] = useState<UserPublic[]>([]);
   const [searchingUsers, setSearchingUsers] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
+  const [groupMode, setGroupMode] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
 
   const notificationsReady = push.permission === 'granted' && push.isSubscribed;
 
@@ -75,9 +81,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       api
         .searchUsers(userSearch)
         .then((res) => {
-          if (active) setFoundUsers(res.users);
+          if (active) { setFoundUsers(res.users); setNewChatError(null); }
         })
-        .catch(() => {})
+        .catch((err: unknown) => { if (active) setNewChatError(err instanceof Error ? err.message : 'Unable to load users.'); })
         .finally(() => {
           if (active) setSearchingUsers(false);
         });
@@ -101,6 +107,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
     } catch (err: unknown) {
       setNewChatError(err instanceof Error ? err.message : 'Unable to start chat.');
     }
+  };
+
+  const handleCreateGroup = async () => {
+    setNewChatError(null);
+    try {
+      const result = await api.createGroup(groupName, selectedMemberIds);
+      onConversationCreated(result.conversation);
+      setNewChatOpen(false);
+      setGroupMode(false);
+      setGroupName('');
+      setSelectedMemberIds([]);
+      setUserSearch('');
+    } catch (err: unknown) {
+      setNewChatError(err instanceof Error ? err.message : 'Unable to create group.');
+    }
+  };
+
+  const toggleMember = (id: string) => {
+    setSelectedMemberIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   };
 
   const filteredConversations = conversations.filter((c) => {
@@ -138,7 +163,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <aside className="w-full md:w-[340px] lg:w-[380px] shrink-0 h-full flex flex-col bg-white dark:bg-[#111917] border-r border-[#E2E6E1] dark:border-[#24322D]">
       {/* Top User & Brand Bar */}
       <header className="px-4 h-16 shrink-0 flex items-center justify-between gap-2 border-b border-[#EAECE9] dark:border-[#1E2A26]">
-        <div className="flex items-center gap-2.5 min-w-0">
+        <button type="button" onClick={onOpenProfile} aria-label="Edit your profile" title="Edit profile" className="flex items-center gap-2.5 min-w-0 rounded-xl p-1 -ml-1 text-left hover:bg-[#F2F4F2] dark:hover:bg-[#1C2723] transition-colors">
           <Avatar username={currentUser.username} avatarUrl={currentUser.avatarUrl} online size="sm" />
           <div className="min-w-0">
             <span className="font-display text-lg font-semibold tracking-tight block leading-tight">
@@ -148,7 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               @{currentUser.username}
             </span>
           </div>
-        </div>
+        </button>
 
         <div className="flex items-center gap-1 shrink-0">
           <button
@@ -156,6 +181,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={() => {
               setNewChatOpen(true);
               setNewChatError(null);
+              setGroupMode(false);
+              setGroupName('');
+              setSelectedMemberIds([]);
+              setUserSearch('');
             }}
             aria-label="New conversation"
             title="New conversation"
@@ -324,7 +353,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </p>
                 <button
                   type="button"
-                  onClick={() => setNewChatOpen(true)}
+                  onClick={() => { setNewChatOpen(true); setUserSearch(''); }}
                   className="min-h-[42px] px-4 py-2 rounded-xl bg-[#0F766E] text-white text-xs font-medium cursor-pointer"
                 >
                   Start New Chat
@@ -354,7 +383,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline justify-between gap-2">
                         <span className="font-display font-medium text-[15px] truncate">
-                          @{conv.peer.username}
+                          {conv.isGroup ? conv.peer.username : `@${conv.peer.username}`}
                         </span>
                         <span className="text-xs text-[#6B7872] dark:text-[#8E9C95] tabular-nums whitespace-nowrap shrink-0">
                           {formatMessageTime(ts)}
@@ -475,26 +504,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <div className="w-full max-w-md bg-white dark:bg-[#141D1A] rounded-2xl border border-[#E2E6E1] dark:border-[#24322D] p-5 space-y-4 shadow-xl">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="font-display text-lg font-semibold">Start a chat</h3>
-              <button
-                type="button"
-                onClick={() => setNewChatOpen(false)}
-                aria-label="Close new chat dialog"
-                className="min-w-[44px] min-h-[44px] rounded-xl flex items-center justify-center text-[#5B6862] hover:bg-[#F2F4F2] dark:hover:bg-[#1E2B27] cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div>
+                <h3 className="font-display text-lg font-semibold">{groupMode ? 'Create a group' : 'New conversation'}</h3>
+                <p className="text-xs text-[#6B7872] dark:text-[#8E9C95]">Choose people from everyone on Famy.</p>
+              </div>
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={() => { setGroupMode((value) => !value); setNewChatError(null); }} className="min-h-10 rounded-lg border border-[#DCE3DF] dark:border-[#2B3A34] px-3 text-xs font-medium text-[#0F766E] dark:text-[#5EEAD4]">
+                  {groupMode ? '1:1 chat' : 'New group'}
+                </button>
+                <button type="button" onClick={() => setNewChatOpen(false)} aria-label="Close new chat dialog" className="min-w-[40px] min-h-[40px] rounded-xl flex items-center justify-center text-[#5B6862] hover:bg-[#F2F4F2] dark:hover:bg-[#1E2B27] cursor-pointer"><X className="w-5 h-5" /></button>
+              </div>
             </div>
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (userSearch.trim()) {
-                  void handleStartChatWith(userSearch);
-                }
-              }}
-              className="flex gap-2"
-            >
+            {groupMode && (
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-[#5B6862] dark:text-[#A9B5AF]">Group name</span>
+                <input value={groupName} onChange={(e) => setGroupName(e.target.value)} maxLength={40} placeholder="e.g. Weekend plans" className="w-full min-h-[44px] px-3 rounded-xl bg-[#F3F5F2] dark:bg-[#17211D] text-sm focus:outline-none focus:ring-2 focus:ring-[#0F766E]" />
+              </label>
+            )}
+
+            <form onSubmit={(e) => { e.preventDefault(); if (!groupMode && userSearch.trim()) void handleStartChatWith(userSearch); }} className="flex gap-2">
               <div className="relative flex-1">
                 <span
                   aria-hidden="true"
@@ -507,17 +536,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   autoFocus
                   value={userSearch}
                   onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Enter username"
+                  placeholder="Search people by username"
                   aria-label="Find user by username"
                   className="w-full min-h-[44px] pl-8 pr-3 py-2 rounded-xl bg-[#F3F5F2] dark:bg-[#17211D] text-sm focus:outline-none focus:ring-2 focus:ring-[#0F766E]"
                 />
               </div>
-              <button
+              {!groupMode && <button
                 type="submit"
                 className="min-h-[44px] px-4 py-2 rounded-xl bg-[#0F766E] text-white text-sm font-medium whitespace-nowrap shrink-0 cursor-pointer"
               >
-                Chat
-              </button>
+                Open chat
+              </button>}
             </form>
 
             {newChatError && (
@@ -526,7 +555,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </p>
             )}
 
-            <div className="max-h-64 overflow-y-auto divide-y divide-[#F0F2EF] dark:divide-[#1E2B27]">
+            <div className="max-h-[min(48vh,380px)] overflow-y-auto divide-y divide-[#F0F2EF] dark:divide-[#1E2B27]">
               {searchingUsers ? (
                 <p className="py-4 text-center text-xs text-[#6B7872]">Searching users...</p>
               ) : foundUsers.length === 0 ? (
@@ -534,12 +563,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   No matching Famy usernames found.
                 </p>
               ) : (
-                foundUsers.map((u) => (
+                  foundUsers.map((u) => (
                   <button
                     key={u.id}
                     type="button"
-                    onClick={() => void handleStartChatWith(u.username)}
-                    className="w-full py-2.5 px-2 flex items-center gap-3 hover:bg-[#F7F8F6] dark:hover:bg-[#192420] rounded-xl text-left transition-colors cursor-pointer"
+                    aria-pressed={groupMode ? selectedMemberIds.includes(u.id) : undefined}
+                    onClick={() => groupMode ? toggleMember(u.id) : void handleStartChatWith(u.username)}
+                    className={`w-full py-2.5 px-2 flex items-center gap-3 hover:bg-[#F7F8F6] dark:hover:bg-[#192420] rounded-xl text-left transition-colors cursor-pointer ${groupMode && selectedMemberIds.includes(u.id) ? 'bg-[#EAF5F0] dark:bg-[#17342D]' : ''}`}
                   >
                     <Avatar username={u.username} avatarUrl={u.avatarUrl} online={u.online} size="sm" />
                     <div className="min-w-0 flex-1">
@@ -548,10 +578,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         {u.bio || 'On Famy'}
                       </p>
                     </div>
+                    {groupMode && <span className={`grid h-5 w-5 place-items-center rounded-md border ${selectedMemberIds.includes(u.id) ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-300 dark:border-slate-600'}`}>{selectedMemberIds.includes(u.id) && <Check size={13} />}</span>}
                   </button>
                 ))
               )}
             </div>
+            {groupMode && <button type="button" onClick={() => void handleCreateGroup()} disabled={!groupName.trim() || selectedMemberIds.length === 0} className="w-full min-h-11 rounded-xl bg-[#0F766E] px-4 text-sm font-semibold text-white disabled:opacity-45">Create group · {selectedMemberIds.length} selected</button>}
           </div>
         </div>
       )}

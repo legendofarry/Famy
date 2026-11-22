@@ -171,7 +171,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
   };
 
   const peer = conversation.peer;
-  const statusText = peerTyping
+  const statusText = conversation.isGroup
+    ? `${conversation.memberIds?.length || 2} members`
+    : peerTyping
     ? 'typing...'
     : peer.online
       ? 'Online'
@@ -194,7 +196,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           <Avatar username={peer.username} avatarUrl={peer.avatarUrl} online={peer.online} size="sm" />
           <div className="min-w-0">
             <h2 className="font-display font-semibold text-base truncate leading-tight">
-              @{peer.username}
+              {conversation.isGroup ? peer.username : `@${peer.username}`}
             </h2>
             <p
               className={`text-xs truncate ${
@@ -209,7 +211,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
-          <button
+          {!conversation.isGroup && <button
             type="button"
             onClick={() => onStartCall('audio')}
             aria-label={`Start voice call with @${peer.username}`}
@@ -218,8 +220,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
           >
             <Phone className="w-4 h-4" />
             <span className="hidden sm:inline">Call</span>
-          </button>
-          <button
+          </button>}
+          {!conversation.isGroup && <button
             type="button"
             onClick={() => onStartCall('video')}
             aria-label={`Start video call with @${peer.username}`}
@@ -228,7 +230,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           >
             <Video className="w-4 h-4" />
             <span className="hidden sm:inline">Video</span>
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -241,7 +243,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
         ) : messages.length === 0 ? (
           <div className="py-14 text-center max-w-sm mx-auto space-y-2">
             <p className="font-display text-base font-medium text-[#33413C] dark:text-[#CBD5D0]">
-              Say hello to @{peer.username}
+              {conversation.isGroup ? `Say hello to ${peer.username}` : `Say hello to @${peer.username}`}
             </p>
             <p className="text-xs text-[#5B6862] dark:text-[#9AA8A1]">
               Send a message, photo, video, link, or start an instant voice or video call.
@@ -284,6 +286,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
                       : 'bg-white dark:bg-[#16201D] text-[#111815] dark:text-[#F1F5F3] rounded-bl-md border border-[#E6E9E5] dark:border-[#22302B]'
                   }`}
                 >
+                  {conversation.isGroup && !isMine && (
+                    <p className="text-[11px] font-semibold text-[#0F766E] dark:text-[#5EEAD4]">@{msg.senderUsername}</p>
+                  )}
                   {/* Image Attachment */}
                   {msg.type === 'image' && msg.mediaUrl && (
                     <button

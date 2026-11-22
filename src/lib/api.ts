@@ -2,6 +2,7 @@ import {
   addDoc, collection, doc, getDoc, getDocs, limit, orderBy, query, runTransaction,
   updateDoc, where,
 } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { db } from './firebase';
 import type { CallHistoryItem, ConversationSummary, LinkPreview, MessageItem, PushStatusInfo, UserPublic } from '../shared/types';
 
@@ -13,42 +14,66 @@ const toMessage = (id: string, d: Record<string, any>): MessageItem => ({ id, co
 
 export const api = {
   async listConversations() {
-    const uid = (await import('firebase/auth')).getAuth().currentUser?.uid;
+    const uid = getAuth().currentUser?.uid;
     if (!uid) throw new Error('Sign in required.');
     const snap = await getDocs(query(collection(db, 'conversations'), where('memberIds', 'array-contains', uid)));
     const conversations: ConversationSummary[] = await Promise.all(snap.docs.map(async (s) => {
-      const d = s.data(); const peerId = (d.memberIds as string[]).find((id) => id !== uid)!;
-      const peerSnap = await getDoc(doc(db, 'users', peerId));
+      const d = s.data(); const memberIds = d.memberIds as string[];
+      const isGroup = Boolean(d.isGroup);
+      const peerId = isGroup ? s.id : memberIds.find((id) => id !== uid)!;
+      const peerSnap = isGroup ? null : await getDoc(doc(db, 'users', peerId));
       const last = d.lastMessage || null;
-      return { id: s.id, peer: peerSnap.exists() ? userFrom(peerId, peerSnap.data()) : userFrom(peerId, {}), lastMessage: last ? toMessage(last.id, last) : null, unreadCount: Number(d.unreadBy?.[uid] || 0), updatedAt: Number(d.updatedAt || 0) };
+      const peer = isGroup
+        ? userFrom(s.id, { username: d.groupName || 'Group', bio: `${memberIds.length} members` })
+        : peerSnap?.exists() ? userFrom(peerId, peerSnap.data()) : userFrom(peerId, {});
+      return { id: s.id, peer, isGroup, memberIds, lastMessage: last ? toMessage(last.id, last) : null, unreadCount: Number(d.unreadBy?.[uid] || 0), updatedAt: Number(d.updatedAt || 0) };
     }));
     return { conversations: conversations.sort((a,b) => b.updatedAt-a.updatedAt) };
   },
   async searchUsers(q: string) {
     const term = q.toLowerCase().replace(/^@+/, '').trim();
-    if (!term) return { users: [] as UserPublic[] };
-    const snap = await getDocs(query(collection(db, 'usernames'), orderBy('username'), where('username', '>=', term), where('username', '<=', `${term}\uf8ff`), limit(15)));
-    const users = await Promise.all(snap.docs.map(async (s) => { const d = s.data(); const p = await getDoc(doc(db, 'users', d.uid)); return p.exists() ? userFrom(d.uid, p.data()) : null; }));
-    return { users: users.filter((u): u is UserPublic => Boolean(u)) };
+    const isLegend = getAuth().currentUser?.email === 'legend@users.famy-app.invalid';
+    const filters = isLegend ? [] : [where('username', '!=', 'lucy')];
+    const snap = await getDocs(query(collection(db, 'usernames'), ...filters, orderBy('username')));
+    const currentUid = getAuth().currentUser?.uid;
+    const users = await Promise.all(snap.docs.map(async (s) => { const d = s.data(); if (d.uid === currentUid) return null; const p = await getDoc(doc(db, 'users', d.uid)); return p.exists() ? userFrom(d.uid, p.data()) : null; }));
+    return { users: users.filter((u): u is UserPublic => Boolean(u) && (!term || u!.username.includes(term))) };
   },
   async startConversation(username: string) {
-    const auth = (await import('firebase/auth')).getAuth(); const uid = auth.currentUser?.uid;
+    const auth = getAuth(); const uid = auth.currentUser?.uid;
     if (!uid) throw new Error('Sign in required.');
     const nameDoc = await getDoc(doc(db, 'usernames', username.toLowerCase()));
     if (!nameDoc.exists()) throw new Error('User not found.');
     const peerId = String(nameDoc.data().uid); if (peerId === uid) throw new Error('You cannot message yourself.');
+    if (username.toLowerCase() === 'lucy' && auth.currentUser?.email !== 'legend@users.famy-app.invalid') throw new Error('This user is not available.');
     const id = conversationId(uid, peerId); const ref = doc(db, 'conversations', id);
     const [me, peer] = await Promise.all([getDoc(doc(db, 'users', uid)), getDoc(doc(db, 'users', peerId))]);
     if (!me.exists() || !peer.exists()) throw new Error('User profile unavailable.');
     await runTransaction(db, async (tx) => { const existing = await tx.get(ref); if (!existing.exists()) tx.set(ref, { memberIds: [uid, peerId].sort(), unreadBy: { [uid]: 0, [peerId]: 0 }, updatedAt: Date.now(), createdAt: Date.now() }); });
     return { conversation: { id, peer: userFrom(peerId, peer.data()), lastMessage: null, unreadCount: 0, updatedAt: Date.now() } as ConversationSummary };
   },
+  async createGroup(name: string, memberIds: string[]) {
+    const uid = getAuth().currentUser?.uid;
+    if (!uid) throw new Error('Sign in required.');
+    const title = name.trim();
+    if (title.length < 2 || title.length > 40) throw new Error('Group name must be 2 to 40 characters.');
+    const members = [...new Set([uid, ...memberIds])].sort();
+    if (members.length < 2) throw new Error('Choose at least one person to add.');
+    const profiles = await Promise.all(members.map((id) => getDoc(doc(db, 'users', id))));
+    if (profiles.some((p) => !p.exists())) throw new Error('One or more selected profiles are unavailable.');
+    const ref = await addDoc(collection(db, 'conversations'), {
+      isGroup: true, groupName: title, memberIds: members,
+      unreadBy: Object.fromEntries(members.map((id) => [id, 0])), createdBy: uid,
+      createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    return { conversation: { id: ref.id, peer: userFrom(ref.id, { username: title, bio: `${members.length} members` }), isGroup: true, memberIds: members, lastMessage: null, unreadCount: 0, updatedAt: Date.now() } as ConversationSummary };
+  },
   async listMessages(id: string) {
     const snap = await getDocs(query(collection(db, 'conversations', id, 'messages'), orderBy('createdAt'), limit(300)));
     return { messages: snap.docs.map((s) => toMessage(s.id, s.data())) };
   },
   async sendMessage(id: string, payload: {body?:string;mediaUrl?:string;mediaMime?:string;mediaName?:string}) {
-    const auth = (await import('firebase/auth')).getAuth(); const uid = auth.currentUser?.uid;
+    const auth = getAuth(); const uid = auth.currentUser?.uid;
     if (!uid) throw new Error('Sign in required.');
     const profile = await getDoc(doc(db, 'users', uid)); if (!profile.exists()) throw new Error('Profile unavailable.');
     const convRef = doc(db, 'conversations', id); const conv = await getDoc(convRef);
@@ -56,8 +81,11 @@ export const api = {
     const type = payload.mediaMime?.startsWith('video/') ? 'video' : payload.mediaUrl ? 'image' : 'text';
     const message = { conversationId: id, senderId: uid, senderUsername: profile.data().username, type, body: payload.body || '', mediaUrl: payload.mediaUrl || null, mediaMime: payload.mediaMime || null, mediaName: payload.mediaName || null, createdAt: Date.now(), readAt: null };
     const ref = await addDoc(collection(db, 'conversations', id, 'messages'), message);
-    const other = (conv.data().memberIds as string[]).find((m) => m !== uid)!;
-    await updateDoc(convRef, { lastMessage: { ...message, id: ref.id }, updatedAt: message.createdAt, [`unreadBy.${other}`]: Number(conv.data().unreadBy?.[other] || 0) + 1 });
+    const unreadBy = { ...(conv.data().unreadBy || {}) };
+    for (const memberId of conv.data().memberIds as string[]) {
+      if (memberId !== uid) unreadBy[memberId] = Number(unreadBy[memberId] || 0) + 1;
+    }
+    await updateDoc(convRef, { lastMessage: { ...message, id: ref.id }, updatedAt: message.createdAt, unreadBy });
     return { message: toMessage(ref.id, message) };
   },
   async uploadMedia(file: File) {

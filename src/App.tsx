@@ -6,6 +6,7 @@ import { ChatView } from './components/ChatView';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import type { WorkspaceTab } from './components/MobileBottomNav';
 import { NotificationsSetupPanel } from './components/NotificationsSetupPanel';
+import { ProfileScreen } from './components/ProfileScreen';
 import { Sidebar } from './components/Sidebar';
 import { useOnlineStatus } from './hooks/usePWAInstall';
 import { usePushNotifications } from './hooks/usePushNotifications';
@@ -31,6 +32,7 @@ export default function App() {
   const [typingByConv, setTypingByConv] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('chats');
   const [notificationsModalOpen, setNotificationsModalOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     try {
       return localStorage.getItem('famy_theme') === 'dark';
@@ -417,6 +419,7 @@ export default function App() {
               void webrtc.startCall(convId, peer, mode);
             }}
             onOpenNotificationsModal={() => setNotificationsModalOpen(true)}
+            onOpenProfile={() => setProfileOpen(true)}
             onToggleDarkMode={() => setDarkMode((d) => !d)}
             onSignOut={() => void handleSignOut()}
           />
@@ -501,6 +504,14 @@ export default function App() {
             onClose={() => setNotificationsModalOpen(false)}
           />
         </div>
+      )}
+
+      {profileOpen && (
+        <ProfileScreen
+          user={user}
+          onClose={() => setProfileOpen(false)}
+          onUpdated={(updated) => { setUser(updated); setProfileOpen(false); }}
+        />
       )}
 
       {/* Live WebRTC Call Overlay */}

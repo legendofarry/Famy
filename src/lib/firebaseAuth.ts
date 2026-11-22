@@ -3,6 +3,7 @@ import {
   deleteUser,
   signInWithEmailAndPassword,
   signOut,
+  updateEmail,
 } from 'firebase/auth';
 import { doc, getDoc, runTransaction, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, authReady, db } from './firebase';
@@ -69,4 +70,42 @@ export async function getSignedInProfile(): Promise<UserPublic | null> {
 
 export async function signOutFamy(): Promise<void> {
   await signOut(auth);
+}
+
+export async function updateFamyProfile(input: { username: string; bio: string; avatarUrl: string | null }): Promise<UserPublic> {
+  await authReady;
+  const current = auth.currentUser;
+  if (!current) throw new Error('Sign in again to update your profile.');
+  const oldProfile = await getDoc(doc(db, 'users', current.uid));
+  if (!oldProfile.exists()) throw new Error('Your profile could not be found.');
+  const oldUsername = String(oldProfile.data().username).toLowerCase();
+  const nextUsername = input.username.toLowerCase();
+  const nextRef = doc(db, 'usernames', nextUsername);
+  const oldRef = doc(db, 'usernames', oldUsername);
+  const profileRef = doc(db, 'users', current.uid);
+
+  if (nextUsername !== oldUsername) {
+    await updateEmail(current, emailForUsername(nextUsername));
+    await current.getIdToken(true);
+  }
+
+  try {
+    await runTransaction(db, async (transaction) => {
+      const [newName, oldName] = await Promise.all([transaction.get(nextRef), transaction.get(oldRef)]);
+      if (nextUsername !== oldUsername && newName.exists()) throw new Error(`Username @${nextUsername} is already taken.`);
+      if (oldName.exists() && oldName.data().uid !== current.uid) throw new Error('Your current username record is unavailable.');
+      if (nextUsername !== oldUsername) {
+        transaction.set(nextRef, { uid: current.uid, username: nextUsername });
+        transaction.delete(oldRef);
+      }
+      transaction.update(profileRef, { username: nextUsername, bio: input.bio.trim(), avatarUrl: input.avatarUrl, lastSeen: Date.now() });
+    });
+  } catch (error) {
+    if (nextUsername !== oldUsername) {
+      await updateEmail(current, emailForUsername(oldUsername)).catch(() => undefined);
+      await current.getIdToken(true).catch(() => undefined);
+    }
+    throw error;
+  }
+  return { id: current.uid, username: nextUsername, bio: input.bio.trim() || null, avatarUrl: input.avatarUrl, online: true, lastSeen: Date.now() };
 }
