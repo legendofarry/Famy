@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { getAuth, setPersistence, browserLocalPersistence, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -15,4 +15,13 @@ export const auth = getAuth(firebaseApp);
 export const db = getFirestore(firebaseApp);
 
 // Keep the session on this device so returning users stay signed in.
-export const authReady = setPersistence(auth, browserLocalPersistence);
+export const authReady = (async () => {
+  await setPersistence(auth, browserLocalPersistence);
+  await new Promise<void>((resolve) => {
+    let unsubscribe: (() => void) = () => undefined;
+    unsubscribe = onAuthStateChanged(auth, () => {
+      unsubscribe();
+      resolve();
+    });
+  });
+})();

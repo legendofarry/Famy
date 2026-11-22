@@ -12,7 +12,7 @@ import { useOnlineStatus } from './hooks/usePWAInstall';
 import { usePushNotifications } from './hooks/usePushNotifications';
 import { useWebRTC } from './hooks/useWebRTC';
 import { api, getStoredToken } from './lib/api';
-import { getSignedInProfile, signOutFamy } from './lib/firebaseAuth';
+import { observeFamyAuthState, signOutFamy } from './lib/firebaseAuth';
 import type {
   CallHistoryItem,
   CallMode,
@@ -77,14 +77,13 @@ export default function App() {
     handleCallSignalRef.current = webrtc.handleCallSignal;
   }, [webrtc.handleCallSignal]);
 
-  // Verify existing session on boot
+  // Restore persistent Firebase sessions and react to later sign-in/sign-out changes.
   useEffect(() => {
-    let active = true;
-    getSignedInProfile()
-      .then((profile) => { if (active) setUser(profile); })
-      .catch(() => { if (active) setUser(null); })
-      .finally(() => { if (active) setAuthChecking(false); });
-    return () => { active = false; };
+    const unsubscribe = observeFamyAuthState((profile) => {
+      setUser(profile);
+      setAuthChecking(false);
+    });
+    return unsubscribe;
   }, []);
 
   const loadWorkspaceData = useCallback(async () => {

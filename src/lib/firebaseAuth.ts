@@ -4,6 +4,7 @@ import {
   signInWithEmailAndPassword,
   signOut,
   updateEmail,
+  onAuthStateChanged,
 } from 'firebase/auth';
 import { doc, getDoc, runTransaction, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, authReady, db } from './firebase';
@@ -66,6 +67,33 @@ export async function getSignedInProfile(): Promise<UserPublic | null> {
   if (!auth.currentUser) return null;
   const profile = await getDoc(doc(db, 'users', auth.currentUser.uid));
   return profile.exists() ? toUser(profile.data(), auth.currentUser.uid) : null;
+}
+
+export function observeFamyAuthState(onChange: (profile: UserPublic | null) => void): () => void {
+  let stopped = false;
+  let unsubscribe: (() => void) | undefined;
+
+  void authReady.then(() => {
+    if (stopped) return;
+    unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (!firebaseUser) {
+        onChange(null);
+        return;
+      }
+      void getDoc(doc(db, 'users', firebaseUser.uid))
+        .then((profile) => {
+          if (!stopped) onChange(profile.exists() ? toUser(profile.data(), firebaseUser.uid) : null);
+        })
+        .catch(() => {
+          if (!stopped) onChange(null);
+        });
+    });
+  });
+
+  return () => {
+    stopped = true;
+    unsubscribe?.();
+  };
 }
 
 export async function signOutFamy(): Promise<void> {
