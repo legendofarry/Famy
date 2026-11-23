@@ -52,11 +52,11 @@ service cloud.firestore {
         && request.auth.uid in request.resource.data.memberIds
         && request.resource.data.memberIds.size() >= 2
         && membersRespectLucy(request.resource.data.memberIds)
-        && ((request.resource.data.isGroup == true
+        && ((request.resource.data.get('isGroup', false) == true
               && request.resource.data.groupName is string
               && request.resource.data.groupName.size() >= 2
               && request.resource.data.groupName.size() <= 40)
-            || (request.resource.data.isGroup != true
+            || (request.resource.data.get('isGroup', false) == false
               && request.resource.data.memberIds.size() == 2));
       allow update: if member(resource.data) && canReadMembers(resource.data.memberIds)
         && request.resource.data.memberIds == resource.data.memberIds;

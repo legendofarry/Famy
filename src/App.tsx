@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BellRing, MessageSquare, WifiOff } from 'lucide-react';
+import { BellRing, LogOut, MessageSquare, WifiOff, X } from 'lucide-react';
 import { AuthScreen } from './components/AuthScreen';
 import { CallOverlay } from './components/CallOverlay';
 import { ChatView } from './components/ChatView';
@@ -33,6 +33,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('chats');
   const [notificationsModalOpen, setNotificationsModalOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [signOutConfirmOpen, setSignOutConfirmOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     try {
       return localStorage.getItem('famy_theme') === 'dark';
@@ -345,15 +348,20 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
+    setSigningOut(true);
+    setSignOutError(null);
     try {
       await signOutFamy();
+      setSignOutConfirmOpen(false);
+      setUser(null);
+      setConversations([]);
+      setMessagesByConv({});
+      setActiveConversationId(null);
     } catch {
-      // Firebase handles session revocation.
+      setSignOutError('Could not sign out. Please check your connection and try again.');
+    } finally {
+      setSigningOut(false);
     }
-    setUser(null);
-    setConversations([]);
-    setMessagesByConv({});
-    setActiveConversationId(null);
   };
 
   if (authChecking) {
@@ -420,7 +428,10 @@ export default function App() {
             onOpenNotificationsModal={() => setNotificationsModalOpen(true)}
             onOpenProfile={() => setProfileOpen(true)}
             onToggleDarkMode={() => setDarkMode((d) => !d)}
-            onSignOut={() => void handleSignOut()}
+            onSignOut={() => {
+              setSignOutError(null);
+              setSignOutConfirmOpen(true);
+            }}
           />
         </div>
 
@@ -511,6 +522,75 @@ export default function App() {
           onClose={() => setProfileOpen(false)}
           onUpdated={(updated) => { setUser(updated); setProfileOpen(false); }}
         />
+      )}
+
+      {signOutConfirmOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm"
+          onClick={() => {
+            if (!signingOut) setSignOutConfirmOpen(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !signingOut) setSignOutConfirmOpen(false);
+          }}
+        >
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="sign-out-title"
+            aria-describedby="sign-out-description"
+            className="w-full max-w-sm overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl dark:border-[#2B3A34] dark:bg-[#141D1A]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="p-6 sm:p-7">
+              <div className="mb-5 flex items-start justify-between">
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-rose-50 text-rose-600 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-900/60">
+                  <LogOut className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <button
+                  type="button"
+                  aria-label="Cancel sign out"
+                  disabled={signingOut}
+                  onClick={() => setSignOutConfirmOpen(false)}
+                  className="grid h-9 w-9 place-items-center rounded-full text-[#6B7872] transition hover:bg-[#F2F4F2] disabled:opacity-50 dark:hover:bg-[#1E2B27]"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+              <h2 id="sign-out-title" className="font-display text-xl font-semibold tracking-tight">
+                Sign out of Famy?
+              </h2>
+              <p id="sign-out-description" className="mt-2 text-sm leading-relaxed text-[#5B6862] dark:text-[#A9B5AF]">
+                You’ll need to sign in again to see your conversations and messages.
+              </p>
+              {signOutError && (
+                <p role="alert" className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                  {signOutError}
+                </p>
+              )}
+            </div>
+            <div className="flex flex-col-reverse gap-2 border-t border-[#E8ECE8] bg-[#FAFBFA] p-4 sm:flex-row sm:justify-end dark:border-[#26332E] dark:bg-[#111916]">
+              <button
+                type="button"
+                autoFocus
+                disabled={signingOut}
+                onClick={() => setSignOutConfirmOpen(false)}
+                className="min-h-11 rounded-xl border border-[#DCE3DF] px-4 text-sm font-medium text-[#33413C] transition hover:bg-white disabled:opacity-50 dark:border-[#34443D] dark:text-[#D3DDD7] dark:hover:bg-[#1B2621]"
+              >
+                Stay signed in
+              </button>
+              <button
+                type="button"
+                disabled={signingOut}
+                onClick={() => void handleSignOut()}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-wait disabled:opacity-70"
+              >
+                <LogOut className="h-4 w-4" aria-hidden="true" />
+                {signingOut ? 'Signing out…' : 'Sign out'}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       {/* Live WebRTC Call Overlay */}
